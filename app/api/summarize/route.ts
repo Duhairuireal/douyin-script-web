@@ -47,7 +47,7 @@ export async function POST(request: Request) {
 
     const headers: Record<string, string> = { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` };
     if (baseUrl.includes("openrouter.ai")) {
-      headers["HTTP-Referer"] = "https://douyin-script-studio-2026.niumiaomiao.chatgpt.site";
+      headers["HTTP-Referer"] = new URL(request.url).origin;
       headers["X-Title"] = "抖音成稿";
     }
 
