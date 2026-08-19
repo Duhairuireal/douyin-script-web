@@ -105,6 +105,12 @@ const DEFAULT_SETTINGS: Settings = {
   customModel: "",
 };
 
+const PROMPT_EXAMPLES = [
+  "整理成公众号文章，保留原作者的观点和语气",
+  "生成小红书笔记，使用短段落和清晰的小标题",
+  "只提炼核心要点，不扩写，不添加原文没有的信息",
+];
+
 function getSummaryConnection(settings: Settings): SummaryConnection {
   if (settings.summaryPreset === "openrouter-free") {
     return {
@@ -204,6 +210,7 @@ function downloadText(name: string, content: string, type = "text/plain;charset=
 export default function Home() {
   const [inputMode, setInputMode] = useState<InputMode>("link");
   const [input, setInput] = useState("");
+  const [generationPrompt, setGenerationPrompt] = useState("");
   const [settings, setSettings] = useState<Settings>(DEFAULT_SETTINGS);
   const [draftSettings, setDraftSettings] = useState<Settings>(DEFAULT_SETTINGS);
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -407,6 +414,7 @@ export default function Home() {
         model: summaryConnection.model,
         providerName: summaryConnection.providerName,
         thinking: summaryConnection.thinking,
+        prompt: generationPrompt.trim(),
         source,
         transcript,
       });
@@ -432,7 +440,7 @@ export default function Home() {
   };
 
   const markdownResult = result
-    ? `# ${result.source.title}\n\n作者：${result.source.author}\n总结模型：${result.model}\n\n## AI 摘要\n\n${result.summary}\n\n## 完整文字稿\n\n${result.transcript}\n`
+    ? `# ${result.source.title}\n\n作者：${result.source.author}\n生成模型：${result.model}\n\n## AI 成稿\n\n${result.summary}\n\n## 完整文字稿\n\n${result.transcript}\n`
     : "";
 
   return (
@@ -450,7 +458,7 @@ export default function Home() {
           <div>
             <p className="eyebrow">抖音成稿</p>
             <h1>把一条视频，变成一份能用的文字</h1>
-            <p className="hero-note">不保存视频，只生成完整文稿与重点摘要。</p>
+            <p className="hero-note">不保存视频，生成完整文稿，再按你的提示词写成文章。</p>
           </div>
 
           <div className="model-picker" ref={modelPickerRef}>
@@ -528,6 +536,7 @@ export default function Home() {
               </div>
             </div>
             <textarea
+              className="source-input"
               value={input}
               onChange={(event) => setInput(event.target.value)}
               aria-label={inputMode === "link" ? "抖音视频链接" : "已有文字稿"}
@@ -538,10 +547,36 @@ export default function Home() {
               }
               disabled={busy}
             />
+            <div className="prompt-composer">
+              <div className="prompt-heading">
+                <div>
+                  <b>生成提示词</b>
+                  <span>可选 · 告诉 AI 最后要写成什么样</span>
+                </div>
+                <small>{generationPrompt.length}/2000</small>
+              </div>
+              <textarea
+                className="prompt-input"
+                value={generationPrompt}
+                onChange={(event) => setGenerationPrompt(event.target.value)}
+                placeholder="例如：整理成一篇适合公众号发布的文章，保留原作者观点，增加清晰的小标题……"
+                aria-label="生成提示词"
+                maxLength={2000}
+                disabled={busy}
+              />
+              <div className="prompt-examples" aria-label="提示词示例">
+                {PROMPT_EXAMPLES.map((example, index) => (
+                  <button key={example} onClick={() => setGenerationPrompt(example)} disabled={busy} title={example}>
+                    {index === 0 ? "公众号文章" : index === 1 ? "小红书笔记" : "精简要点"}
+                  </button>
+                ))}
+                {generationPrompt && <button className="clear-prompt" onClick={() => setGenerationPrompt("")} disabled={busy}>清空</button>}
+              </div>
+            </div>
             <div className="input-footer">
               <span className="privacy-note"><i /> {inputMode === "link" ? "视频由火山服务器读取，不在网站保存" : `${input.length} 个字符`}</span>
               <button className="primary-button" onClick={handleGenerate} disabled={busy}>
-                {busy ? "正在处理" : "生成文字稿"} <span>{busy ? "···" : "→"}</span>
+                {busy ? "正在处理" : "开始生成"} <span>{busy ? "···" : "→"}</span>
               </button>
             </div>
           </section>
@@ -558,7 +593,7 @@ export default function Home() {
                 <h2>一次生成，直接可用</h2>
                 <div className="result-items">
                   <div><b>全文</b><span>完整转写与智能分段</span></div>
-                  <div><b>摘要</b><span>核心观点与关键信息</span></div>
+                  <div><b>成稿</b><span>按照提示词生成需要的文章</span></div>
                   <div><b>文件</b><span>TXT 与 Markdown 下载</span></div>
                 </div>
               </>
@@ -635,7 +670,7 @@ export default function Home() {
               </div>
             </div>
             <div className="result-tabs" role="tablist">
-              <button className={resultTab === "summary" ? "active" : ""} onClick={() => setResultTab("summary")} role="tab">AI 摘要</button>
+              <button className={resultTab === "summary" ? "active" : ""} onClick={() => setResultTab("summary")} role="tab">AI 成稿</button>
               <button className={resultTab === "transcript" ? "active" : ""} onClick={() => setResultTab("transcript")} role="tab">完整文字稿</button>
             </div>
             <article className={resultTab === "summary" ? "summary-content" : "transcript-content"}>

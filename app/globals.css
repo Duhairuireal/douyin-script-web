@@ -94,7 +94,7 @@ h2 { margin: 0; font-size: 19px; }
 
 .content-grid { margin-top: 66px; display: grid; grid-template-columns: minmax(0, 1.7fr) minmax(300px, .8fr); gap: 20px; }
 .input-card, .result-preview, .result-workspace { border: 1px solid var(--line); border-radius: 26px; background: var(--panel); }
-.input-card { min-height: 446px; padding: 28px; box-shadow: var(--shadow); display: flex; flex-direction: column; }
+.input-card { min-height: 590px; padding: 28px; box-shadow: var(--shadow); display: flex; flex-direction: column; }
 .input-card-top { display: flex; align-items: center; justify-content: space-between; gap: 18px; }
 .card-heading { display: flex; align-items: center; gap: 13px; }
 .card-heading p { margin: 5px 0 0; color: var(--muted); font-size: 11px; }
@@ -102,13 +102,23 @@ h2 { margin: 0; font-size: 19px; }
 .mode-switch { padding: 3px; border: 1px solid var(--line); border-radius: 10px; background: #f6f7f4; display: flex; }
 .mode-switch button { padding: 6px 10px; border: 0; border-radius: 7px; background: transparent; color: var(--muted); font-size: 10px; }
 .mode-switch button.active { background: white; color: var(--ink); box-shadow: 0 2px 8px rgba(31,38,32,.08); }
-textarea {
-  flex: 1; min-height: 230px; margin: 28px 0 22px; padding: 22px; resize: none;
+.source-input {
+  flex: 1; min-height: 210px; margin: 28px 0 14px; padding: 22px; resize: none;
   border: 1px solid #e8eae4; border-radius: 18px; outline: 0; background: #fafaf7;
   color: var(--ink); font-size: 14px; line-height: 1.8; transition: .16s ease;
 }
-textarea:focus { border-color: #b9c9bd; box-shadow: 0 0 0 4px var(--green-soft); background: white; }
-textarea::placeholder { color: #a6aaa1; }
+.source-input:focus, .prompt-input:focus { border-color: #b9c9bd; box-shadow: 0 0 0 4px var(--green-soft); background: white; }
+.source-input::placeholder, .prompt-input::placeholder { color: #a6aaa1; }
+.prompt-composer { margin-bottom: 18px; padding: 15px; border: 1px solid #e5e8e1; border-radius: 15px; background: #f7f8f5; }
+.prompt-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 14px; }
+.prompt-heading > div { display: flex; align-items: baseline; flex-wrap: wrap; gap: 7px; }
+.prompt-heading b { font-size: 11px; }
+.prompt-heading span, .prompt-heading small { color: var(--muted); font-size: 8px; }
+.prompt-input { width: 100%; min-height: 72px; margin: 10px 0 8px; padding: 11px 12px; resize: vertical; border: 1px solid var(--line); border-radius: 10px; outline: 0; background: white; color: var(--ink); font-size: 11px; line-height: 1.65; transition: .16s ease; }
+.prompt-examples { display: flex; flex-wrap: wrap; gap: 5px; }
+.prompt-examples button { padding: 5px 8px; border: 1px solid var(--line); border-radius: 20px; background: white; color: var(--muted); font-size: 8px; }
+.prompt-examples button:hover:not(:disabled) { border-color: #b7c6bb; color: var(--green); }
+.prompt-examples .clear-prompt { margin-left: auto; border-color: transparent; background: transparent; }
 .input-footer { display: flex; align-items: center; justify-content: space-between; gap: 20px; }
 .privacy-note { color: var(--muted); font-size: 10px; }
 .privacy-note i { display: inline-block; width: 7px; height: 7px; margin-right: 6px; border-radius: 50%; background: #78a187; }
@@ -118,7 +128,7 @@ textarea::placeholder { color: #a6aaa1; }
 .secondary-button { padding: 10px 13px; border: 1px solid var(--line-strong); border-radius: 10px; background: white; color: var(--ink); font-size: 11px; }
 .secondary-button:hover { border-color: #bdc5ba; }
 
-.result-preview { min-height: 446px; padding: 28px; background: #eff2ed; display: flex; flex-direction: column; transition: background .2s ease; }
+.result-preview { min-height: 590px; padding: 28px; background: #eff2ed; display: flex; flex-direction: column; transition: background .2s ease; }
 .result-preview.processing { background: #eef3ef; }
 .preview-heading { display: flex; align-items: center; justify-content: space-between; }
 .ready-pill { padding: 5px 8px; border-radius: 20px; background: rgba(255,255,255,.7); color: var(--muted); font-size: 9px; }
@@ -233,7 +243,7 @@ textarea::placeholder { color: #a6aaa1; }
 @media (max-width: 560px) {
   h1 { font-size: 36px; }
   .hero-note { line-height: 1.6; }
-  .input-card { min-height: 470px; padding: 21px; }
+  .input-card { min-height: 610px; padding: 21px; }
   .input-footer { align-items: stretch; flex-direction: column; }
   .primary-button { width: 100%; }
   .mode-switch { width: 100%; }
