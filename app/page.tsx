@@ -5,18 +5,25 @@ import { useEffect, useMemo, useRef, useState } from "react";
 type InputMode = "link" | "text";
 type Stage = "idle" | "resolving" | "transcribing" | "summarizing" | "done" | "error";
 type ResultTab = "summary" | "transcript";
+type SummaryPreset = "openrouter-free" | "deepseek-flash" | "deepseek-pro" | "custom";
+type ThinkingLevel = "disabled" | "high" | "max";
 
 type Settings = {
   tikhubKey: string;
   asrKey: string;
   asrResourceId: string;
-  summaryBase: string;
-  summaryKey: string;
-  summaryModel: string;
+  summaryPreset: SummaryPreset;
+  openRouterKey: string;
+  deepseekKey: string;
+  deepseekThinking: ThinkingLevel;
+  customName: string;
+  customBase: string;
+  customKey: string;
+  customModel: string;
 };
 
 type ModelOption = {
-  id: string;
+  id: SummaryPreset;
   name: string;
   provider: string;
   note: string;
@@ -46,24 +53,41 @@ type DisplayError = {
   requestId?: string;
 };
 
-const STORAGE_KEY = "douyin-script-web-settings-v1";
+type SummaryConnection = {
+  apiKey: string;
+  baseUrl: string;
+  model: string;
+  displayName: string;
+  providerName: string;
+  thinking: ThinkingLevel;
+};
+
+const STORAGE_KEY = "douyin-script-web-settings-v2";
 
 const BUILTIN_MODELS: ModelOption[] = [
   {
-    id: "deepseek-chat",
-    name: "DeepSeek V3",
-    provider: "DeepSeek",
-    note: "速度快，适合日常内容整理",
-    mark: "D",
-    tags: ["文本", "快速"],
+    id: "openrouter-free",
+    name: "免费总结",
+    provider: "OpenRouter",
+    note: "自动选择当前可用的免费模型",
+    mark: "F",
+    tags: ["免费", "默认"],
   },
   {
-    id: "deepseek-reasoner",
-    name: "DeepSeek R1",
+    id: "deepseek-flash",
+    name: "DeepSeek V4 Flash",
     provider: "DeepSeek",
-    note: "推理更深入，适合复杂内容",
-    mark: "R",
-    tags: ["文本", "推理"],
+    note: "便宜快速，适合大多数视频总结",
+    mark: "D",
+    tags: ["快速", "推荐"],
+  },
+  {
+    id: "deepseek-pro",
+    name: "DeepSeek V4 Pro",
+    provider: "DeepSeek",
+    note: "复杂长文与高质量结构化总结",
+    mark: "P",
+    tags: ["高质量", "深度"],
   },
 ];
 
@@ -71,10 +95,56 @@ const DEFAULT_SETTINGS: Settings = {
   tikhubKey: "",
   asrKey: "",
   asrResourceId: "volc.seedasr.auc",
-  summaryBase: "https://api.deepseek.com",
-  summaryKey: "",
-  summaryModel: "deepseek-chat",
+  summaryPreset: "openrouter-free",
+  openRouterKey: "",
+  deepseekKey: "",
+  deepseekThinking: "high",
+  customName: "我的模型",
+  customBase: "",
+  customKey: "",
+  customModel: "",
 };
+
+function getSummaryConnection(settings: Settings): SummaryConnection {
+  if (settings.summaryPreset === "openrouter-free") {
+    return {
+      apiKey: settings.openRouterKey,
+      baseUrl: "https://openrouter.ai/api/v1",
+      model: "openrouter/free",
+      displayName: "免费总结",
+      providerName: "OpenRouter 免费总结",
+      thinking: "disabled",
+    };
+  }
+  if (settings.summaryPreset === "deepseek-flash") {
+    return {
+      apiKey: settings.deepseekKey,
+      baseUrl: "https://api.deepseek.com",
+      model: "deepseek-v4-flash",
+      displayName: "DeepSeek V4 Flash",
+      providerName: "DeepSeek V4 Flash",
+      thinking: "disabled",
+    };
+  }
+  if (settings.summaryPreset === "deepseek-pro") {
+    return {
+      apiKey: settings.deepseekKey,
+      baseUrl: "https://api.deepseek.com",
+      model: "deepseek-v4-pro",
+      displayName: "DeepSeek V4 Pro",
+      providerName: "DeepSeek V4 Pro",
+      thinking: settings.deepseekThinking,
+    };
+  }
+  return {
+    apiKey: settings.customKey,
+    baseUrl: settings.customBase,
+    model: settings.customModel,
+    displayName: settings.customName || settings.customModel || "自定义模型",
+    providerName: settings.customName || "自定义总结接口",
+    thinking: "disabled",
+  };
+}
 
 const STAGE_INDEX: Record<Stage, number> = {
   idle: 0,
@@ -179,24 +249,24 @@ export default function Home() {
     };
   }, []);
 
-  const selectedModel = useMemo<ModelOption>(() => {
-    return (
-      BUILTIN_MODELS.find((item) => item.id === settings.summaryModel) ?? {
-        id: settings.summaryModel || "custom-model",
-        name: settings.summaryModel || "自定义模型",
-        provider: "自定义接口",
-        note: "OpenAI 兼容模型",
-        mark: "C",
-        tags: ["自定义"],
-      }
-    );
-  }, [settings.summaryModel]);
+  const customModel = useMemo<ModelOption>(() => ({
+    id: "custom",
+    name: settings.customName || settings.customModel || "自定义模型",
+    provider: "自定义接口",
+    note: settings.customModel || "填写 API 地址、Key 与模型 ID",
+    mark: "C",
+    tags: ["自定义"],
+  }), [settings.customModel, settings.customName]);
+
+  const allModels = useMemo(() => [...BUILTIN_MODELS, customModel], [customModel]);
+  const selectedModel = allModels.find((item) => item.id === settings.summaryPreset) ?? allModels[0];
+  const summaryConnection = useMemo(() => getSummaryConnection(settings), [settings]);
 
   const visibleModels = useMemo(() => {
     const query = modelSearch.trim().toLowerCase();
-    if (!query) return BUILTIN_MODELS;
-    return BUILTIN_MODELS.filter((item) => `${item.name} ${item.id} ${item.note}`.toLowerCase().includes(query));
-  }, [modelSearch]);
+    if (!query) return allModels;
+    return allModels.filter((item) => `${item.name} ${item.id} ${item.note}`.toLowerCase().includes(query));
+  }, [allModels, modelSearch]);
 
   const busy = stage === "resolving" || stage === "transcribing" || stage === "summarizing";
   const stageIndex = STAGE_INDEX[stage];
@@ -208,10 +278,14 @@ export default function Home() {
     window.localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
   };
 
-  const selectModel = (modelId: string) => {
-    persistSettings({ ...settings, summaryModel: modelId });
+  const selectModel = (modelId: SummaryPreset) => {
+    persistSettings({ ...settings, summaryPreset: modelId });
     setModelOpen(false);
     setModelSearch("");
+    if (modelId === "custom" && (!settings.customBase || !settings.customKey || !settings.customModel)) {
+      setDraftSettings({ ...settings, summaryPreset: "custom" });
+      setSettingsOpen(true);
+    }
   };
 
   const openSettings = () => {
@@ -226,9 +300,12 @@ export default function Home() {
       tikhubKey: draftSettings.tikhubKey.trim(),
       asrKey: draftSettings.asrKey.trim(),
       asrResourceId: draftSettings.asrResourceId.trim() || DEFAULT_SETTINGS.asrResourceId,
-      summaryBase: draftSettings.summaryBase.trim().replace(/\/+$/, ""),
-      summaryKey: draftSettings.summaryKey.trim(),
-      summaryModel: draftSettings.summaryModel.trim() || DEFAULT_SETTINGS.summaryModel,
+      openRouterKey: draftSettings.openRouterKey.trim(),
+      deepseekKey: draftSettings.deepseekKey.trim(),
+      customName: draftSettings.customName.trim() || "我的模型",
+      customBase: draftSettings.customBase.trim().replace(/\/+$/, ""),
+      customKey: draftSettings.customKey.trim(),
+      customModel: draftSettings.customModel.trim(),
     });
     setSettingsOpen(false);
   };
@@ -237,8 +314,9 @@ export default function Home() {
     const missing: string[] = [];
     if (inputMode === "link" && !settings.tikhubKey) missing.push("TikHub API Key");
     if (inputMode === "link" && !settings.asrKey) missing.push("火山 ASR API Key");
-    if (!settings.summaryKey) missing.push("DeepSeek API Key");
-    if (!settings.summaryBase || !settings.summaryModel) missing.push("总结接口和模型");
+    if (settings.summaryPreset === "openrouter-free" && !settings.openRouterKey) missing.push("OpenRouter API Key");
+    if ((settings.summaryPreset === "deepseek-flash" || settings.summaryPreset === "deepseek-pro") && !settings.deepseekKey) missing.push("DeepSeek API Key");
+    if (settings.summaryPreset === "custom" && (!settings.customBase || !settings.customKey || !settings.customModel)) missing.push("自定义 API 地址、Key 与模型 ID");
     if (missing.length) {
       setError({
         service: "连接设置",
@@ -323,15 +401,20 @@ export default function Home() {
       }
 
       setStage("summarizing");
-      const summarized = await apiPost<{ summary: string }>("/api/summarize", {
-        apiKey: settings.summaryKey,
-        baseUrl: settings.summaryBase,
-        model: settings.summaryModel,
+      const summarized = await apiPost<{ summary: string; resolvedModel?: string }>("/api/summarize", {
+        apiKey: summaryConnection.apiKey,
+        baseUrl: summaryConnection.baseUrl,
+        model: summaryConnection.model,
+        providerName: summaryConnection.providerName,
+        thinking: summaryConnection.thinking,
         source,
         transcript,
       });
 
-      setResult({ source, transcript, summary: summarized.summary, model: settings.summaryModel });
+      const reportedModel = settings.summaryPreset === "openrouter-free" && summarized.resolvedModel
+        ? `${summaryConnection.displayName} · ${summarized.resolvedModel}`
+        : summaryConnection.displayName;
+      setResult({ source, transcript, summary: summarized.summary, model: reportedModel });
       setResultTab("summary");
       setStage("done");
     } catch (caught) {
@@ -389,7 +472,7 @@ export default function Home() {
               <div className="model-menu" role="dialog" aria-label="选择总结模型">
                 <div className="model-menu-head">
                   <span>选择总结模型</span>
-                  <span className="model-count">{BUILTIN_MODELS.length} 个常用</span>
+                  <span className="model-count">{allModels.length} 个选项</span>
                 </div>
                 <label className="model-search">
                   <span>⌕</span>
@@ -400,7 +483,7 @@ export default function Home() {
                     autoFocus
                   />
                 </label>
-                <p className="model-group">DEEPSEEK</p>
+                <p className="model-group">总结模型</p>
                 <div role="listbox">
                   {visibleModels.map((item) => (
                     <button
@@ -410,7 +493,7 @@ export default function Home() {
                       role="option"
                       aria-selected={selectedModel.id === item.id}
                     >
-                      <span className="model-avatar small">{item.mark}</span>
+                      <span className={`model-avatar small ${item.id === "custom" ? "custom" : ""}`}>{item.mark}</span>
                       <span className="model-row-copy">
                         <strong>{item.name}</strong>
                         <small>{item.note}</small>
@@ -423,13 +506,6 @@ export default function Home() {
                   ))}
                   {!visibleModels.length && <div className="model-empty">没有找到匹配模型</div>}
                 </div>
-                {!BUILTIN_MODELS.some((item) => item.id === settings.summaryModel) && (
-                  <button className="model-row selected custom-row" onClick={() => selectModel(settings.summaryModel)}>
-                    <span className="model-avatar small custom">C</span>
-                    <span className="model-row-copy"><strong>{settings.summaryModel}</strong><small>当前自定义模型</small></span>
-                    <span className="model-check">✓</span>
-                  </button>
-                )}
                 <button className="model-manage" onClick={openSettings}>⚙ 管理模型与 API</button>
               </div>
             )}
@@ -577,8 +653,8 @@ export default function Home() {
             <header>
               <div>
                 <p className="eyebrow">连接设置</p>
-                <h2>连接三个服务</h2>
-                <span>密钥只保存在这个浏览器，不写入网站服务器。</span>
+                <h2>连接服务与总结模型</h2>
+                <span>选择默认、DeepSeek 或自定义模型。密钥只保存在这个浏览器。</span>
               </div>
               <button className="modal-close" onClick={() => setSettingsOpen(false)} aria-label="关闭">×</button>
             </header>
@@ -597,13 +673,51 @@ export default function Home() {
                 </div>
               </div>
 
-              <div className="provider-section">
-                <div className="provider-title"><i>3</i><span><b>DeepSeek</b><small>总结重点，支持 OpenAI 兼容接口</small></span><em className={draftSettings.summaryKey ? "ok" : ""}>{draftSettings.summaryKey ? "已填写" : "待填写"}</em></div>
-                <label><span>API 地址</span><input value={draftSettings.summaryBase} onChange={(event) => setDraftSettings({ ...draftSettings, summaryBase: event.target.value })} placeholder="https://api.deepseek.com" /></label>
-                <div className="field-grid">
-                  <label><span>API Key</span><input type={showKeys ? "text" : "password"} value={draftSettings.summaryKey} onChange={(event) => setDraftSettings({ ...draftSettings, summaryKey: event.target.value })} placeholder="sk-..." autoComplete="off" /></label>
-                  <label><span>模型名称</span><input value={draftSettings.summaryModel} onChange={(event) => setDraftSettings({ ...draftSettings, summaryModel: event.target.value })} placeholder="deepseek-chat" /></label>
+              <div className={`provider-section ${draftSettings.summaryPreset === "openrouter-free" ? "active-provider" : ""}`}>
+                <div className="provider-title">
+                  <i>3</i>
+                  <span><b>免费总结 · OpenRouter</b><small>免费模型自动路由，适合测试与低频使用</small></span>
+                  <button className="preset-button" onClick={() => setDraftSettings({ ...draftSettings, summaryPreset: "openrouter-free" })}>{draftSettings.summaryPreset === "openrouter-free" ? "当前使用" : "设为当前"}</button>
                 </div>
+                <label><span>OpenRouter API Key</span><input type={showKeys ? "text" : "password"} value={draftSettings.openRouterKey} onChange={(event) => setDraftSettings({ ...draftSettings, openRouterKey: event.target.value })} placeholder="sk-or-v1-..." autoComplete="off" /></label>
+                <p className="provider-tip">模型 ID 固定为 openrouter/free。免费路由可能排队或限流，适合前期测试。</p>
+              </div>
+
+              <div className={`provider-section ${draftSettings.summaryPreset.startsWith("deepseek-") ? "active-provider" : ""}`}>
+                <div className="provider-title">
+                  <i>4</i>
+                  <span><b>DeepSeek V4</b><small>Flash 日常总结，Pro 处理复杂长文</small></span>
+                  <em className={draftSettings.deepseekKey ? "ok" : ""}>{draftSettings.deepseekKey ? "已填写" : "待填写"}</em>
+                </div>
+                <label><span>DeepSeek API Key</span><input type={showKeys ? "text" : "password"} value={draftSettings.deepseekKey} onChange={(event) => setDraftSettings({ ...draftSettings, deepseekKey: event.target.value })} placeholder="sk-..." autoComplete="off" /></label>
+                <div className="preset-pair">
+                  <button className={draftSettings.summaryPreset === "deepseek-flash" ? "active" : ""} onClick={() => setDraftSettings({ ...draftSettings, summaryPreset: "deepseek-flash" })}><b>V4 Flash</b><small>快速、低成本</small></button>
+                  <button className={draftSettings.summaryPreset === "deepseek-pro" ? "active" : ""} onClick={() => setDraftSettings({ ...draftSettings, summaryPreset: "deepseek-pro" })}><b>V4 Pro</b><small>复杂内容、深度整理</small></button>
+                </div>
+                <div className="thinking-setting">
+                  <span>V4 Pro 思考强度</span>
+                  <div>
+                    {(["disabled", "high", "max"] as ThinkingLevel[]).map((level) => (
+                      <button className={draftSettings.deepseekThinking === level ? "active" : ""} key={level} onClick={() => setDraftSettings({ ...draftSettings, deepseekThinking: level })}>
+                        {level === "disabled" ? "快速" : level === "high" ? "深入" : "最大"}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </div>
+
+              <div className={`provider-section ${draftSettings.summaryPreset === "custom" ? "active-provider" : ""}`}>
+                <div className="provider-title">
+                  <i>5</i>
+                  <span><b>自定义模型</b><small>支持 OpenAI 兼容的 chat/completions 接口</small></span>
+                  <button className="preset-button" onClick={() => setDraftSettings({ ...draftSettings, summaryPreset: "custom" })}>{draftSettings.summaryPreset === "custom" ? "当前使用" : "设为当前"}</button>
+                </div>
+                <div className="field-grid">
+                  <label><span>显示名称</span><input value={draftSettings.customName} onChange={(event) => setDraftSettings({ ...draftSettings, customName: event.target.value })} placeholder="我的总结模型" /></label>
+                  <label><span>模型 ID</span><input value={draftSettings.customModel} onChange={(event) => setDraftSettings({ ...draftSettings, customModel: event.target.value })} placeholder="provider/model-name" /></label>
+                </div>
+                <label><span>API 地址</span><input value={draftSettings.customBase} onChange={(event) => setDraftSettings({ ...draftSettings, customBase: event.target.value })} placeholder="https://example.com/v1" /></label>
+                <label><span>API Key</span><input type={showKeys ? "text" : "password"} value={draftSettings.customKey} onChange={(event) => setDraftSettings({ ...draftSettings, customKey: event.target.value })} placeholder="sk-..." autoComplete="off" /></label>
               </div>
             </div>
 
