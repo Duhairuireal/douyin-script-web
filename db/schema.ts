@@ -1,4 +1,9 @@
-// Intentionally empty by default.
-// Add Drizzle tables here when the site actually needs a database.
-// See examples/d1/db/schema.ts for an opt-in example.
-export {};
+import { sql } from "drizzle-orm";
+import { sqliteTable, text } from "drizzle-orm/sqlite-core";
+
+export const userApiSettings = sqliteTable("user_api_settings", {
+  userId: text("user_id").primaryKey(),
+  encryptedPayload: text("encrypted_payload").notNull(),
+  iv: text("iv").notNull(),
+  updatedAt: text("updated_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+});

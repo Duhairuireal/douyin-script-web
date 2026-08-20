@@ -8,6 +8,13 @@ type Stage = "idle" | "resolving" | "transcribing" | "summarizing" | "done" | "e
 type ResultTab = "summary" | "transcript";
 type SummaryPreset = "openrouter-free" | "deepseek-flash" | "deepseek-pro" | "custom";
 type ThinkingLevel = "disabled" | "high" | "max";
+type AccountStatus = "loading" | "anonymous" | "authenticated" | "error";
+type SyncState = "idle" | "saving" | "saved" | "error";
+
+type AccountUser = {
+  displayName: string;
+  email: string;
+};
 
 type Settings = {
   tikhubKey: string;
@@ -211,6 +218,59 @@ function downloadText(name: string, content: string, type = "text/plain;charset=
   URL.revokeObjectURL(url);
 }
 
+function hasSavedKeys(settings: Settings) {
+  return Boolean(settings.tikhubKey || settings.asrKey || settings.openRouterKey || settings.deepseekKey || settings.customKey);
+}
+
+function LoginGate({
+  status,
+  error,
+  onContinueLocally,
+  onRetry,
+}: {
+  status: AccountStatus;
+  error: string;
+  onContinueLocally: () => void;
+  onRetry: () => void;
+}) {
+  return (
+    <main className="login-shell">
+      <section className="login-story">
+        <div className="login-brand"><span>稿</span><b>视频成稿</b></div>
+        <div className="login-copy">
+          <p className="eyebrow">你的内容工作台</p>
+          <h1>登录一次，常用的 Key 自动回来</h1>
+          <p>抖音、B站、语音识别与总结模型的连接设置，都跟随你的账号安全保存。</p>
+        </div>
+        <div className="login-benefits">
+          <div><i>01</i><span><b>自动恢复</b><small>换电脑或清理浏览器后，不必重新找 Key</small></span></div>
+          <div><i>02</i><span><b>加密保存</b><small>密钥加密后写入账号数据库，不会进入公开代码</small></span></div>
+          <div><i>03</i><span><b>仍可本机使用</b><small>暂不登录时，也可以只把设置留在当前浏览器</small></span></div>
+        </div>
+      </section>
+
+      <section className="login-panel">
+        <div className="login-card">
+          <span className="login-card-mark">稿</span>
+          <p className="eyebrow">欢迎回来</p>
+          <h2>{status === "loading" ? "正在检查登录状态" : status === "error" ? "暂时无法连接账号" : "登录视频成稿"}</h2>
+          <p>{status === "loading" ? "正在为你读取账号与已保存的连接设置……" : error || "使用 ChatGPT 账号登录，自动同步以前填写过的 API Key。"}</p>
+          {status === "loading" ? (
+            <div className="login-loading"><i /><span>正在连接</span></div>
+          ) : (
+            <>
+              <a className="login-primary" href="/signin-with-chatgpt?return_to=%2F">使用 ChatGPT 登录 <span>→</span></a>
+              {status === "error" && <button className="login-retry" onClick={onRetry}>重新检查</button>}
+              <button className="login-local" onClick={onContinueLocally}>暂不登录，只在本机使用</button>
+            </>
+          )}
+          <small className="login-privacy">登录只用于识别你的账号和保存设置，不会读取你的 ChatGPT 对话。</small>
+        </div>
+      </section>
+    </main>
+  );
+}
+
 export default function Home() {
   const [inputMode, setInputMode] = useState<InputMode>("link");
   const [input, setInput] = useState("");
@@ -227,22 +287,66 @@ export default function Home() {
   const [resultTab, setResultTab] = useState<ResultTab>("summary");
   const [error, setError] = useState<DisplayError | null>(null);
   const [copied, setCopied] = useState(false);
+  const [accountStatus, setAccountStatus] = useState<AccountStatus>("loading");
+  const [accountUser, setAccountUser] = useState<AccountUser | null>(null);
+  const [accountError, setAccountError] = useState("");
+  const [localOnly, setLocalOnly] = useState(false);
+  const [accountReload, setAccountReload] = useState(0);
+  const [syncState, setSyncState] = useState<SyncState>("idle");
   const modelPickerRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    try {
-      const saved = window.localStorage.getItem(STORAGE_KEY);
-      if (saved) {
-        const parsed = { ...DEFAULT_SETTINGS, ...JSON.parse(saved) } as Settings;
-        window.setTimeout(() => {
-          setSettings(parsed);
-          setDraftSettings(parsed);
-        }, 0);
+    let cancelled = false;
+    const hydrate = async () => {
+      let localSettings = DEFAULT_SETTINGS;
+      try {
+        const saved = window.localStorage.getItem(STORAGE_KEY);
+        if (saved) localSettings = { ...DEFAULT_SETTINGS, ...JSON.parse(saved) } as Settings;
+        if (window.sessionStorage.getItem("video-script-local-only") === "1") setLocalOnly(true);
+      } catch {
+        // Keep safe defaults if browser storage is unavailable or malformed.
       }
-    } catch {
-      // Keep safe defaults if browser storage is unavailable or malformed.
-    }
-  }, []);
+
+      try {
+        const response = await fetch("/api/account/settings", { headers: { Accept: "application/json" } });
+        const payload = await response.json().catch(() => ({})) as Record<string, unknown>;
+        if (cancelled) return;
+        if (response.status === 401) {
+          setSettings(localSettings);
+          setDraftSettings(localSettings);
+          setAccountStatus("anonymous");
+          return;
+        }
+        if (!response.ok) throw new Error(String(payload.error ?? "账号服务暂时不可用"));
+        const user = payload.user as AccountUser;
+        const cloudSettings = payload.settings && typeof payload.settings === "object" ? payload.settings as Partial<Settings> : null;
+        const nextSettings = cloudSettings ? { ...DEFAULT_SETTINGS, ...localSettings, ...cloudSettings } as Settings : localSettings;
+        setSettings(nextSettings);
+        setDraftSettings(nextSettings);
+        setAccountUser(user);
+        setAccountStatus("authenticated");
+        window.localStorage.setItem(STORAGE_KEY, JSON.stringify(nextSettings));
+
+        if (!cloudSettings && hasSavedKeys(localSettings)) {
+          setSyncState("saving");
+          const migrated = await fetch("/api/account/settings", {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ settings: localSettings }),
+          });
+          if (!cancelled) setSyncState(migrated.ok ? "saved" : "error");
+        }
+      } catch (caught) {
+        if (cancelled) return;
+        setSettings(localSettings);
+        setDraftSettings(localSettings);
+        setAccountError(caught instanceof Error ? caught.message : "账号服务暂时不可用");
+        setAccountStatus("error");
+      }
+    };
+    void hydrate();
+    return () => { cancelled = true; };
+  }, [accountReload]);
 
   useEffect(() => {
     const closePicker = (event: PointerEvent) => {
@@ -285,10 +389,27 @@ export default function Home() {
   const stageIndex = STAGE_INDEX[stage];
   const progress = stage === "resolving" ? 16 : stage === "transcribing" ? Math.min(72, 30 + pollCount * 4) : stage === "summarizing" ? 86 : stage === "done" ? 100 : 0;
 
+  const syncCloudSettings = async (next: Settings) => {
+    if (accountStatus !== "authenticated") return;
+    setSyncState("saving");
+    try {
+      const response = await fetch("/api/account/settings", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ settings: next }),
+      });
+      if (!response.ok) throw new Error("同步失败");
+      setSyncState("saved");
+    } catch {
+      setSyncState("error");
+    }
+  };
+
   const persistSettings = (next: Settings) => {
     setSettings(next);
     setDraftSettings(next);
     window.localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
+    void syncCloudSettings(next);
   };
 
   const selectModel = (modelId: SummaryPreset) => {
@@ -333,7 +454,7 @@ export default function Home() {
       setError({
         service: "连接设置",
         reason: `还没有填写：${missing.join("、")}`,
-        suggestion: "打开连接设置，填好后再生成。密钥只保存在当前浏览器。",
+        suggestion: accountStatus === "authenticated" ? "打开连接设置，填好后会自动保存到你的账号。" : "打开连接设置，填好后会保存在当前浏览器。",
       });
       setStage("error");
       openSettings();
@@ -468,6 +589,20 @@ export default function Home() {
     ? `# ${result.source.title}\n\n作者：${result.source.author}\n生成模型：${result.model}\n\n## AI 成稿\n\n${result.summary}\n\n## 完整文字稿\n\n${result.transcript}\n`
     : "";
 
+  if ((accountStatus === "loading" || accountStatus === "error" || accountStatus === "anonymous") && !localOnly) {
+    return (
+      <LoginGate
+        status={accountStatus}
+        error={accountError}
+        onRetry={() => { setAccountError(""); setAccountStatus("loading"); setAccountReload((value) => value + 1); }}
+        onContinueLocally={() => {
+          window.sessionStorage.setItem("video-script-local-only", "1");
+          setLocalOnly(true);
+        }}
+      />
+    );
+  }
+
   return (
     <main className="app-shell">
       <aside className="side-rail" aria-label="主要导航">
@@ -486,6 +621,7 @@ export default function Home() {
             <p className="hero-note">抖音单条、B站 UP 主批量导入，再按你的提示词写成文章。</p>
           </div>
 
+          <div className="topbar-actions">
           <div className="model-picker" ref={modelPickerRef}>
             <button
               className="model-trigger"
@@ -541,6 +677,23 @@ export default function Home() {
                 <button className="model-manage" onClick={openSettings}>⚙ 管理模型与 API</button>
               </div>
             )}
+          </div>
+          {accountStatus === "authenticated" && accountUser ? (
+            <details className="account-menu">
+              <summary aria-label="账号菜单">
+                <span>{(accountUser.displayName || accountUser.email).slice(0, 1).toUpperCase()}</span>
+                <i className={syncState === "error" ? "error" : ""}>{syncState === "saving" ? "同步中" : syncState === "error" ? "同步失败" : "已登录"}</i>
+              </summary>
+              <div>
+                <b>{accountUser.displayName}</b>
+                <small>{accountUser.email}</small>
+                <p><i className={syncState === "saved" ? "ok" : ""} />{syncState === "saving" ? "正在加密保存设置" : syncState === "error" ? "云端保存失败，本机设置仍然可用" : "API Key 会自动同步到你的账号"}</p>
+                <a href="/signout-with-chatgpt?return_to=%2F">退出登录</a>
+              </div>
+            </details>
+          ) : (
+            <a className="account-login-link" href="/signin-with-chatgpt?return_to=%2F">登录并同步</a>
+          )}
           </div>
         </header>
 
@@ -725,7 +878,7 @@ export default function Home() {
               <div>
                 <p className="eyebrow">连接设置</p>
                 <h2>连接服务与总结模型</h2>
-                <span>选择默认、DeepSeek 或自定义模型。密钥只保存在这个浏览器。</span>
+                <span>{accountStatus === "authenticated" ? "密钥会加密保存到你的账号，并在下次登录时自动恢复。" : "选择默认、DeepSeek 或自定义模型。密钥只保存在这个浏览器。"}</span>
               </div>
               <button className="modal-close" onClick={() => setSettingsOpen(false)} aria-label="关闭">×</button>
             </header>
@@ -793,7 +946,7 @@ export default function Home() {
             </div>
 
             <footer>
-              <label className="show-key-toggle"><input type="checkbox" checked={showKeys} onChange={(event) => setShowKeys(event.target.checked)} /> 显示密钥</label>
+              <label className="show-key-toggle"><input type="checkbox" checked={showKeys} onChange={(event) => setShowKeys(event.target.checked)} /> 显示密钥 · {accountStatus === "authenticated" ? syncState === "saving" ? "正在同步" : syncState === "error" ? "同步失败" : "账号自动保存" : "本机保存"}</label>
               <div><button className="cancel-button" onClick={() => setSettingsOpen(false)}>取消</button><button className="primary-button" onClick={saveSettings}>保存设置 <span>✓</span></button></div>
             </footer>
           </section>
