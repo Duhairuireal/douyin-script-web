@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import { saveHistoryDocument } from "../lib/history-client";
 
 type DisplayError = {
   service: string;
@@ -55,7 +56,9 @@ type Props = {
 };
 
 const DB_NAME = "video-script-studio";
+const DB_VERSION = 2;
 const STORE_NAME = "bilibili-results";
+const HISTORY_STORE_NAME = "history-documents";
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 function readError(value: unknown): DisplayError {
@@ -86,9 +89,10 @@ async function apiPost<T>(url: string, payload: Record<string, unknown>): Promis
 
 function openArchiveDb() {
   return new Promise<IDBDatabase>((resolve, reject) => {
-    const request = indexedDB.open(DB_NAME, 1);
+    const request = indexedDB.open(DB_NAME, DB_VERSION);
     request.onupgradeneeded = () => {
       if (!request.result.objectStoreNames.contains(STORE_NAME)) request.result.createObjectStore(STORE_NAME, { keyPath: "id" });
+      if (!request.result.objectStoreNames.contains(HISTORY_STORE_NAME)) request.result.createObjectStore(HISTORY_STORE_NAME, { keyPath: "id" });
     };
     request.onsuccess = () => resolve(request.result);
     request.onerror = () => reject(request.error);
@@ -290,6 +294,19 @@ export default function BilibiliImporter(props: Props) {
           savedAt: Date.now(),
         };
         await saveArchive(saved);
+        await saveHistoryDocument({
+          platform: "bilibili",
+          sourceId: item.id,
+          sourceUrl: `https://www.bilibili.com/video/${item.bvid}`,
+          title: item.title,
+          author: `B站 UP主 ${uid}`,
+          originalTranscript: transcript,
+          workingContent: summarized.summary,
+          initialSummary: summarized.summary,
+          lastPrompt: props.generationPrompt.trim(),
+          model: saved.model,
+          method: extracted.method === "subtitle" ? "B站字幕" : "豆包 ASR",
+        }).catch(() => undefined);
         setArchive((current) => [saved, ...current.filter((row) => row.id !== saved.id)]);
         setStates((current) => ({ ...current, [item.id]: "done" }));
       } catch (caught) {
@@ -326,9 +343,9 @@ export default function BilibiliImporter(props: Props) {
         <div>
           <p className="eyebrow">BILIBILI · 批量工作区</p>
           <h2>读取一个 UP 主，再选择需要保存的作品</h2>
-          <p>优先使用 B站公开字幕；没有字幕时才调用豆包 ASR。完成结果自动保存在这台电脑。</p>
+          <p>优先使用 B站公开字幕；没有字幕时才调用豆包 ASR。完成结果自动进入历史文稿库。</p>
         </div>
-        <span className="local-save-pill">本机已保存 {archive.length} 条</span>
+        <span className="local-save-pill">已完成 {archive.length} 条</span>
       </header>
 
       <div className="profile-reader">
@@ -430,7 +447,7 @@ export default function BilibiliImporter(props: Props) {
 
       {archive.length > 0 && (
         <div className="archive-section">
-          <div className="archive-heading"><b>本机成稿库</b><span>保存在浏览器，不会写入公开仓库</span></div>
+          <div className="archive-heading"><b>最近完成</b><span>完整原文和可编辑工作稿可在“历史文稿”中继续处理</span></div>
           <div className="archive-list">
             {archive.slice(0, 12).map((result) => (
               <details key={`${result.id}-${result.savedAt}`}>

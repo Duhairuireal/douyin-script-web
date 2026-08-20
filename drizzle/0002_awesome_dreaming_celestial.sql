@@ -1,0 +1,1 @@
+CREATE INDEX `idx_transcript_documents_user_updated` ON `transcript_documents` (`user_id`,`updated_at`);

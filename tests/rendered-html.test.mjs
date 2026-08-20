@@ -27,9 +27,13 @@ test("server-renders the account entry screen", async () => {
 });
 
 test("keeps platform workflows and secrets separated", async () => {
-  const [page, importer, douyinRoute, biliProfile, biliTranscript, visionRoute, accountRoute, cryptoHelper, hosting] = await Promise.all([
+  const [page, importer, historyWorkspace, historyClient, historyRoute, schema, douyinRoute, biliProfile, biliTranscript, visionRoute, accountRoute, cryptoHelper, hosting] = await Promise.all([
     readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/components/BilibiliImporter.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/components/HistoryWorkspace.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/lib/history-client.ts", import.meta.url), "utf8"),
+    readFile(new URL("../app/api/history/route.ts", import.meta.url), "utf8"),
+    readFile(new URL("../db/schema.ts", import.meta.url), "utf8"),
     readFile(new URL("../app/api/tikhub/route.ts", import.meta.url), "utf8"),
     readFile(new URL("../app/api/bilibili/profile/route.ts", import.meta.url), "utf8"),
     readFile(new URL("../app/api/bilibili/transcript/route.ts", import.meta.url), "utf8"),
@@ -42,6 +46,14 @@ test("keeps platform workflows and secrets separated", async () => {
   assert.match(page, /contentType === "image"/);
   assert.match(importer, /fetch_video_subtitle|\/api\/bilibili\/transcript/);
   assert.match(importer, /indexedDB\.open/);
+  assert.match(page, /HistoryWorkspace/);
+  assert.match(page, /saveHistoryDocument/);
+  assert.match(historyWorkspace, /原始转写/);
+  assert.match(historyWorkspace, /让 AI 改一下/);
+  assert.match(historyWorkspace, /updateHistoryDocument/);
+  assert.match(historyClient, /migrateLegacyBilibiliHistory/);
+  assert.match(historyRoute, /WHERE id = \? AND user_id = \?/);
+  assert.match(schema, /transcriptDocuments/);
   assert.match(douyinRoute, /aweme_type\) === 68/);
   assert.match(biliProfile, /fetch_user_post_videos/);
   assert.match(biliTranscript, /fetch_video_playurl/);

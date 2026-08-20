@@ -2,8 +2,11 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import BilibiliImporter from "./components/BilibiliImporter";
+import HistoryWorkspace from "./components/HistoryWorkspace";
+import { saveHistoryDocument } from "./lib/history-client";
 
 type InputMode = "link" | "bilibili" | "text";
+type WorkspaceView = "create" | "history";
 type Stage = "idle" | "resolving" | "transcribing" | "summarizing" | "done" | "error";
 type ResultTab = "summary" | "transcript";
 type SummaryPreset = "openrouter-free" | "deepseek-flash" | "deepseek-pro" | "custom";
@@ -272,6 +275,7 @@ function LoginGate({
 }
 
 export default function Home() {
+  const [workspaceView, setWorkspaceView] = useState<WorkspaceView>("create");
   const [inputMode, setInputMode] = useState<InputMode>("link");
   const [input, setInput] = useState("");
   const [generationPrompt, setGenerationPrompt] = useState("");
@@ -569,6 +573,20 @@ export default function Home() {
         ? `${summaryConnection.displayName} · ${summarized.resolvedModel}`
         : summaryConnection.displayName;
       setResult({ source, transcript, summary: summarized.summary, model: reportedModel });
+      const sourceUrl = inputMode === "link" ? (cleanInput.match(/https?:\/\/\S+/)?.[0] ?? "") : "";
+      await saveHistoryDocument({
+        platform: inputMode === "link" ? "douyin" : "manual",
+        sourceId: source.awemeId,
+        sourceUrl,
+        title: source.title,
+        author: source.author,
+        originalTranscript: transcript,
+        workingContent: summarized.summary,
+        initialSummary: summarized.summary,
+        lastPrompt: generationPrompt.trim(),
+        model: reportedModel,
+        method: inputMode === "text" ? "手动导入" : source.contentType === "image" ? "抖音图文识别" : "豆包 ASR",
+      }).catch(() => undefined);
       setResultTab("summary");
       setStage("done");
     } catch (caught) {
@@ -608,7 +626,8 @@ export default function Home() {
       <aside className="side-rail" aria-label="主要导航">
         <div className="brand-mark" title="抖音成稿">稿</div>
         <nav>
-          <button className="rail-button active" aria-label="新建成稿" title="新建成稿">＋</button>
+          <button className={`rail-button ${workspaceView === "create" ? "active" : ""}`} onClick={() => setWorkspaceView("create")} aria-label="新建成稿" title="新建成稿">＋</button>
+          <button className={`rail-button history-rail ${workspaceView === "history" ? "active" : ""}`} onClick={() => setWorkspaceView("history")} aria-label="历史文稿" title="历史文稿">历</button>
         </nav>
         <button className="rail-button rail-settings" onClick={openSettings} aria-label="连接设置" title="连接设置">⚙</button>
       </aside>
@@ -617,8 +636,8 @@ export default function Home() {
         <header className="topbar">
           <div>
             <p className="eyebrow">视频成稿</p>
-            <h1>把视频和图文，变成一份能用的文字</h1>
-            <p className="hero-note">抖音单条、B站 UP 主批量导入，再按你的提示词写成文章。</p>
+            <h1>{workspaceView === "history" ? "每一份文稿，都可以继续生长" : "把视频和图文，变成一份能用的文字"}</h1>
+            <p className="hero-note">{workspaceView === "history" ? "找回原始转写，手动修改，或用新的提示词让 AI 接着改。" : "抖音单条、B站 UP 主批量导入，再按你的提示词写成文章。"}</p>
           </div>
 
           <div className="topbar-actions">
@@ -697,6 +716,14 @@ export default function Home() {
           </div>
         </header>
 
+        {workspaceView === "history" ? (
+          <HistoryWorkspace
+            summaryConnection={summaryConnection}
+            signedIn={accountStatus === "authenticated"}
+            onOpenSettings={openSettings}
+            onCreateNew={() => setWorkspaceView("create")}
+          />
+        ) : <>
         <div className="source-tabs" aria-label="内容来源">
           <button className={inputMode === "link" ? "active" : ""} onClick={() => setInputMode("link")}><i>抖</i><span><b>抖音单条</b><small>视频 / 图文自动识别</small></span></button>
           <button className={inputMode === "bilibili" ? "active" : ""} onClick={() => setInputMode("bilibili")}><i>B</i><span><b>B站主页</b><small>读取标题并批量选择</small></span></button>
@@ -867,6 +894,7 @@ export default function Home() {
             </article>
           </section>
         )}
+        </>}
       </section>
 
       {settingsOpen && (
