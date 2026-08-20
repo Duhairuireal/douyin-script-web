@@ -2,14 +2,25 @@ import { errorText, fail, json, readBody, readResponseBody, requiredString } fro
 
 const DOUYIN_URL = /https:\/\/(?:v\.douyin\.com|www\.douyin\.com|www\.iesdouyin\.com|douyin\.com)\/[^\s<>"']+/i;
 
-function firstUrl(value: unknown) {
+function firstUrl(value: unknown): string {
+  if (typeof value === "string") return value.startsWith("https://") ? value : "";
+  if (Array.isArray(value)) {
+    for (const child of value) {
+      const url = firstUrl(child);
+      if (url) return url;
+    }
+    return "";
+  }
   if (!value || typeof value !== "object") return "";
-  const list = (value as Record<string, unknown>).url_list;
-  if (!Array.isArray(list)) return "";
-  return list.find((item): item is string => typeof item === "string" && item.startsWith("https://")) ?? "";
+  const row = value as Record<string, unknown>;
+  for (const key of ["url_list", "download_url_list", "display_image", "play_addr", "download_addr"]) {
+    const url = firstUrl(row[key]);
+    if (url) return url;
+  }
+  return "";
 }
 
-function parseVideo(payload: Record<string, unknown>) {
+function parsePost(payload: Record<string, unknown>) {
   const data = payload.data;
   if (!data || typeof data !== "object") throw new Error("TikHub 没有返回作品数据");
   const dataObject = data as Record<string, unknown>;
@@ -21,8 +32,28 @@ function parseVideo(payload: Record<string, unknown>) {
   if (!detail || typeof detail !== "object") throw new Error("无法读取这条抖音作品，作品可能已删除或设为私密");
 
   const item = detail as Record<string, unknown>;
+  const author = item.author;
+  const authorName = author && typeof author === "object" ? (author as Record<string, unknown>).nickname : "";
+  const base = {
+    awemeId: String(item.aweme_id ?? "unknown"),
+    title: String(item.desc ?? item.item_title ?? "未命名抖音作品"),
+    author: String(authorName || "未知作者"),
+  };
+
+  const imagePostInfo = item.image_post_info;
+  const imageRows = imagePostInfo && typeof imagePostInfo === "object"
+    ? (imagePostInfo as Record<string, unknown>).images
+    : item.images;
+  const images = Array.isArray(imageRows)
+    ? imageRows.map(firstUrl).filter((url): url is string => Boolean(url))
+    : [];
+  if (Number(item.aweme_type) === 68 || images.length) {
+    if (!images.length) throw new Error("识别到图文作品，但 TikHub 没有返回可读取的图片");
+    return { ...base, contentType: "image" as const, images, textContent: String(item.desc ?? item.item_title ?? "").trim() };
+  }
+
   const video = item.video;
-  if (!video || typeof video !== "object") throw new Error("这条作品没有可处理的视频内容");
+  if (!video || typeof video !== "object") throw new Error("这条作品没有可处理的视频或图文内容");
   const videoObject = video as Record<string, unknown>;
   const candidates: Array<{ rate: number; url: string }> = [];
   const bitRates = videoObject.bit_rate;
@@ -43,12 +74,9 @@ function parseVideo(payload: Record<string, unknown>) {
   const mediaUrl = candidates[0]?.url;
   if (!mediaUrl) throw new Error("TikHub 返回了作品信息，但没有可用的视频地址");
 
-  const author = item.author;
-  const authorName = author && typeof author === "object" ? (author as Record<string, unknown>).nickname : "";
   return {
-    awemeId: String(item.aweme_id ?? "unknown"),
-    title: String(item.desc ?? item.item_title ?? "未命名抖音视频"),
-    author: String(authorName || "未知作者"),
+    ...base,
+    contentType: "video" as const,
     mediaUrl,
   };
 }
@@ -78,7 +106,7 @@ export async function POST(request: Request) {
         suggestion: response.status === 401 ? "检查 TikHub API Key、套餐和接口权限。" : "检查链接是否公开，并稍后重试。",
       }, response.status === 401 ? 401 : 502);
     }
-    return json(parseVideo(payload));
+    return json(parsePost(payload));
   } catch (error) {
     return fail({ service: "TikHub 抖音作品接口", reason: error instanceof Error ? error.message : "解析作品失败" }, 400);
   }

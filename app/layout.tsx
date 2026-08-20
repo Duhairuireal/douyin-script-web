@@ -11,8 +11,8 @@ export async function generateMetadata(): Promise<Metadata> {
   const host = requestHeaders.get("x-forwarded-host") ?? requestHeaders.get("host") ?? "localhost:3000";
   const protocol = requestHeaders.get("x-forwarded-proto") ?? (host.includes("localhost") ? "http" : "https");
   const origin = `${protocol}://${host}`;
-  const title = "抖音成稿｜视频转文字与 AI 总结";
-  const description = "粘贴抖音链接，生成完整文字稿与结构化 AI 摘要。";
+  const title = "视频成稿｜抖音与B站转文字、AI 总结";
+  const description = "支持抖音视频与图文、B站 UP 主作品批量选择，生成完整文字稿与 AI 成稿。";
   const socialImage = `${origin}/og.png`;
   return {
     metadataBase: new URL(origin),
@@ -23,7 +23,7 @@ export async function generateMetadata(): Promise<Metadata> {
       description,
       type: "website",
       url: origin,
-      images: [{ url: socialImage, width: 1728, height: 910, alt: "抖音成稿，一条链接变成文字与重点" }],
+      images: [{ url: socialImage, width: 1728, height: 910, alt: "视频成稿，把抖音与B站内容变成文字" }],
     },
     twitter: { card: "summary_large_image", title, description, images: [socialImage] },
   };

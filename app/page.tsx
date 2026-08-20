@@ -1,8 +1,9 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import BilibiliImporter from "./components/BilibiliImporter";
 
-type InputMode = "link" | "text";
+type InputMode = "link" | "bilibili" | "text";
 type Stage = "idle" | "resolving" | "transcribing" | "summarizing" | "done" | "error";
 type ResultTab = "summary" | "transcript";
 type SummaryPreset = "openrouter-free" | "deepseek-flash" | "deepseek-pro" | "custom";
@@ -35,7 +36,10 @@ type Source = {
   awemeId: string;
   title: string;
   author: string;
+  contentType?: "video" | "image";
   mediaUrl?: string;
+  images?: string[];
+  textContent?: string;
 };
 
 type GenerationResult = {
@@ -194,7 +198,7 @@ async function apiPost<T>(url: string, payload: Record<string, unknown>): Promis
 }
 
 function safeFileName(value: string) {
-  return (value || "抖音成稿").replace(/[<>:"/\\|?*\u0000-\u001f]/g, "_").slice(0, 70);
+  return (value || "抖音成稿").replace(/[<>:"/\\|?*]/g, "_").slice(0, 70);
 }
 
 function downloadText(name: string, content: string, type = "text/plain;charset=utf-8") {
@@ -230,8 +234,10 @@ export default function Home() {
       const saved = window.localStorage.getItem(STORAGE_KEY);
       if (saved) {
         const parsed = { ...DEFAULT_SETTINGS, ...JSON.parse(saved) } as Settings;
-        setSettings(parsed);
-        setDraftSettings(parsed);
+        window.setTimeout(() => {
+          setSettings(parsed);
+          setDraftSettings(parsed);
+        }, 0);
       }
     } catch {
       // Keep safe defaults if browser storage is unavailable or malformed.
@@ -319,8 +325,7 @@ export default function Home() {
 
   const ensureReady = () => {
     const missing: string[] = [];
-    if (inputMode === "link" && !settings.tikhubKey) missing.push("TikHub API Key");
-    if (inputMode === "link" && !settings.asrKey) missing.push("火山 ASR API Key");
+    if ((inputMode === "link" || inputMode === "bilibili") && !settings.tikhubKey) missing.push("TikHub API Key");
     if (settings.summaryPreset === "openrouter-free" && !settings.openRouterKey) missing.push("OpenRouter API Key");
     if ((settings.summaryPreset === "deepseek-flash" || settings.summaryPreset === "deepseek-pro") && !settings.deepseekKey) missing.push("DeepSeek API Key");
     if (settings.summaryPreset === "custom" && (!settings.customBase || !settings.customKey || !settings.customModel)) missing.push("自定义 API 地址、Key 与模型 ID");
@@ -369,29 +374,49 @@ export default function Home() {
         source = resolved;
 
         setStage("transcribing");
-        const submitted = await apiPost<{ state: "pending" | "done"; taskId: string; logId?: string; transcript?: string }>(
-          "/api/asr/submit",
-          {
-            mediaUrl: resolved.mediaUrl,
-            apiKey: settings.asrKey,
-            resourceId: settings.asrResourceId,
-          },
-        );
-
-        transcript = submitted.transcript ?? "";
-        if (submitted.state !== "done") {
-          for (let attempt = 1; attempt <= 75; attempt += 1) {
-            setPollCount(attempt);
-            await sleep(4000);
-            const queried = await apiPost<{ state: "pending" | "done"; transcript?: string }>("/api/asr/query", {
-              taskId: submitted.taskId,
-              logId: submitted.logId,
+        if (resolved.contentType === "image") {
+          const recognized = await apiPost<{ transcript: string; resolvedModel?: string }>("/api/vision", {
+            apiKey: summaryConnection.apiKey,
+            baseUrl: summaryConnection.baseUrl,
+            model: summaryConnection.model,
+            providerName: summaryConnection.providerName,
+            title: resolved.title,
+            images: resolved.images,
+          });
+          transcript = [resolved.textContent, recognized.transcript].filter(Boolean).join("\n\n");
+        } else {
+          if (!settings.asrKey) {
+            openSettings();
+            throw {
+              service: "连接设置",
+              reason: "这是一条视频作品，但还没有填写火山 ASR API Key",
+              suggestion: "图文作品不需要 ASR；视频作品需要在连接设置中填写 ASR Key。",
+            } satisfies DisplayError;
+          }
+          const submitted = await apiPost<{ state: "pending" | "done"; taskId: string; logId?: string; transcript?: string }>(
+            "/api/asr/submit",
+            {
+              mediaUrl: resolved.mediaUrl,
               apiKey: settings.asrKey,
               resourceId: settings.asrResourceId,
-            });
-            if (queried.state === "done") {
-              transcript = queried.transcript ?? "";
-              break;
+            },
+          );
+
+          transcript = submitted.transcript ?? "";
+          if (submitted.state !== "done") {
+            for (let attempt = 1; attempt <= 75; attempt += 1) {
+              setPollCount(attempt);
+              await sleep(4000);
+              const queried = await apiPost<{ state: "pending" | "done"; transcript?: string }>("/api/asr/query", {
+                taskId: submitted.taskId,
+                logId: submitted.logId,
+                apiKey: settings.asrKey,
+                resourceId: settings.asrResourceId,
+              });
+              if (queried.state === "done") {
+                transcript = queried.transcript ?? "";
+                break;
+              }
             }
           }
         }
@@ -456,9 +481,9 @@ export default function Home() {
       <section className="workspace">
         <header className="topbar">
           <div>
-            <p className="eyebrow">抖音成稿</p>
-            <h1>把一条视频，变成一份能用的文字</h1>
-            <p className="hero-note">不保存视频，生成完整文稿，再按你的提示词写成文章。</p>
+            <p className="eyebrow">视频成稿</p>
+            <h1>把视频和图文，变成一份能用的文字</h1>
+            <p className="hero-note">抖音单条、B站 UP 主批量导入，再按你的提示词写成文章。</p>
           </div>
 
           <div className="model-picker" ref={modelPickerRef}>
@@ -488,7 +513,6 @@ export default function Home() {
                     value={modelSearch}
                     onChange={(event) => setModelSearch(event.target.value)}
                     placeholder="搜索模型"
-                    autoFocus
                   />
                 </label>
                 <p className="model-group">总结模型</p>
@@ -520,7 +544,23 @@ export default function Home() {
           </div>
         </header>
 
-        <div className="content-grid">
+        <div className="source-tabs" aria-label="内容来源">
+          <button className={inputMode === "link" ? "active" : ""} onClick={() => setInputMode("link")}><i>抖</i><span><b>抖音单条</b><small>视频 / 图文自动识别</small></span></button>
+          <button className={inputMode === "bilibili" ? "active" : ""} onClick={() => setInputMode("bilibili")}><i>B</i><span><b>B站主页</b><small>读取标题并批量选择</small></span></button>
+          <button className={inputMode === "text" ? "active" : ""} onClick={() => setInputMode("text")}><i>文</i><span><b>已有文稿</b><small>跳过采集与识别</small></span></button>
+        </div>
+
+        {inputMode === "bilibili" ? (
+          <BilibiliImporter
+            tikhubKey={settings.tikhubKey}
+            asrKey={settings.asrKey}
+            asrResourceId={settings.asrResourceId}
+            generationPrompt={generationPrompt}
+            onGenerationPromptChange={setGenerationPrompt}
+            summaryConnection={summaryConnection}
+            onOpenSettings={openSettings}
+          />
+        ) : <div className="content-grid">
           <section className="input-card">
             <div className="input-card-top">
               <div className="card-heading">
@@ -530,10 +570,6 @@ export default function Home() {
                   <p>{inputMode === "link" ? "支持抖音分享口令或完整链接" : "跳过语音识别，直接进行 AI 总结"}</p>
                 </div>
               </div>
-              <div className="mode-switch" aria-label="输入方式">
-                <button className={inputMode === "link" ? "active" : ""} onClick={() => setInputMode("link")}>视频链接</button>
-                <button className={inputMode === "text" ? "active" : ""} onClick={() => setInputMode("text")}>已有文稿</button>
-              </div>
             </div>
             <textarea
               className="source-input"
@@ -542,7 +578,7 @@ export default function Home() {
               aria-label={inputMode === "link" ? "抖音视频链接" : "已有文字稿"}
               placeholder={
                 inputMode === "link"
-                  ? "把抖音分享内容粘贴到这里…\n例如：https://v.douyin.com/xxxx/"
+                  ? "把抖音分享内容粘贴到这里…\n视频会做语音识别；图文会自动读取图片文字。\n例如：https://v.douyin.com/xxxx/"
                   : "把抖音或豆包已经生成的文字稿粘贴到这里…"
               }
               disabled={busy}
@@ -606,7 +642,7 @@ export default function Home() {
                 <div className="process-steps">
                   {[
                     [1, "读取视频", "取得标题和播放地址"],
-                    [2, "语音转写", pollCount ? `正在查询识别结果 · ${pollCount}` : "豆包 Seed-ASR 2.0"],
+                    [2, "内容转文字", pollCount ? `正在查询识别结果 · ${pollCount}` : "视频走豆包 ASR，图文走视觉识别"],
                     [3, "整理重点", selectedModel.name],
                   ].map(([index, title, note]) => (
                     <div className={stageIndex === index ? "current" : stageIndex > Number(index) ? "finished" : ""} key={String(title)}>
@@ -650,11 +686,11 @@ export default function Home() {
 
             <div className="pipeline-note">
               <span>TikHub</span><i />
-              <span>豆包 ASR</span><i />
+              <span>ASR / 图文识别</span><i />
               <span>{selectedModel.name}</span>
             </div>
           </aside>
-        </div>
+        </div>}
 
         {result && stage === "done" && (
           <section className="result-workspace">
@@ -696,7 +732,7 @@ export default function Home() {
 
             <div className="settings-body">
               <div className="provider-section">
-                <div className="provider-title"><i>1</i><span><b>TikHub</b><small>读取抖音作品信息与视频地址</small></span><em className={draftSettings.tikhubKey ? "ok" : ""}>{draftSettings.tikhubKey ? "已填写" : "待填写"}</em></div>
+                <div className="provider-title"><i>1</i><span><b>TikHub</b><small>读取抖音作品与 B站 UP 主公开视频</small></span><em className={draftSettings.tikhubKey ? "ok" : ""}>{draftSettings.tikhubKey ? "已填写" : "待填写"}</em></div>
                 <label><span>API Key</span><input type={showKeys ? "text" : "password"} value={draftSettings.tikhubKey} onChange={(event) => setDraftSettings({ ...draftSettings, tikhubKey: event.target.value })} placeholder="tk_..." autoComplete="off" /></label>
               </div>
 
