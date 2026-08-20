@@ -20,18 +20,21 @@ test("server-renders the account entry screen", async () => {
 
   const html = await response.text();
   assert.match(html, /<title>视频成稿｜抖音与B站转文字、AI 总结<\/title>/i);
-  assert.match(html, /登录一次，常用的 Key 自动回来/);
+  assert.match(html, /一个内测账号，保存你的创作进度/);
+  assert.match(html, /账号和密码/);
   assert.match(html, /正在检查登录状态/);
   assert.match(html, /正在为你读取账号与已保存的连接设置/);
-  assert.match(html, /不会读取你的 ChatGPT 对话/);
+  assert.match(html, /正式开放用户前会升级云端账号系统/);
 });
 
 test("keeps platform workflows and secrets separated", async () => {
-  const [page, importer, historyWorkspace, historyClient, historyRoute, schema, douyinRoute, biliProfile, biliTranscript, visionRoute, accountRoute, cryptoHelper, hosting] = await Promise.all([
+  const [page, importer, historyWorkspace, historyClient, localAccount, projectNotes, historyRoute, schema, douyinRoute, biliProfile, biliTranscript, visionRoute, accountRoute, cryptoHelper, hosting] = await Promise.all([
     readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/components/BilibiliImporter.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/components/HistoryWorkspace.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/lib/history-client.ts", import.meta.url), "utf8"),
+    readFile(new URL("../app/lib/local-account.ts", import.meta.url), "utf8"),
+    readFile(new URL("../PROJECT_NOTES.md", import.meta.url), "utf8"),
     readFile(new URL("../app/api/history/route.ts", import.meta.url), "utf8"),
     readFile(new URL("../db/schema.ts", import.meta.url), "utf8"),
     readFile(new URL("../app/api/tikhub/route.ts", import.meta.url), "utf8"),
@@ -52,6 +55,13 @@ test("keeps platform workflows and secrets separated", async () => {
   assert.match(historyWorkspace, /让 AI 改一下/);
   assert.match(historyWorkspace, /updateHistoryDocument/);
   assert.match(historyClient, /migrateLegacyBilibiliHistory/);
+  assert.match(historyClient, /localOwnerId/);
+  assert.match(localAccount, /crypto\.subtle\.digest\("SHA-256"/);
+  assert.match(localAccount, /passwordHash/);
+  assert.doesNotMatch(localAccount, /passwordPlaintext/);
+  assert.match(localAccount, /douyin-script-web-settings-v2:local:/);
+  assert.match(projectNotes, /Supabase Auth/);
+  assert.match(projectNotes, /开始收费/);
   assert.match(historyRoute, /WHERE id = \? AND user_id = \?/);
   assert.match(schema, /transcriptDocuments/);
   assert.match(douyinRoute, /aweme_type\) === 68/);

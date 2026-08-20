@@ -1,9 +1,17 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import BilibiliImporter from "./components/BilibiliImporter";
 import HistoryWorkspace from "./components/HistoryWorkspace";
 import { saveHistoryDocument } from "./lib/history-client";
+import {
+  getCurrentLocalAccount,
+  localSettingsKey,
+  loginLocalAccount,
+  logoutLocalAccount,
+  registerLocalAccount,
+  type LocalAccountProfile,
+} from "./lib/local-account";
 
 type InputMode = "link" | "bilibili" | "text";
 type WorkspaceView = "create" | "history";
@@ -11,12 +19,14 @@ type Stage = "idle" | "resolving" | "transcribing" | "summarizing" | "done" | "e
 type ResultTab = "summary" | "transcript";
 type SummaryPreset = "openrouter-free" | "deepseek-flash" | "deepseek-pro" | "custom";
 type ThinkingLevel = "disabled" | "high" | "max";
-type AccountStatus = "loading" | "anonymous" | "authenticated" | "error";
+type AccountStatus = "loading" | "anonymous" | "local-account" | "authenticated" | "error";
 type SyncState = "idle" | "saving" | "saved" | "error";
 
 type AccountUser = {
+  id?: string;
   displayName: string;
-  email: string;
+  email?: string;
+  kind?: "local" | "cloud";
 };
 
 type Settings = {
@@ -77,6 +87,7 @@ type SummaryConnection = {
 };
 
 const STORAGE_KEY = "douyin-script-web-settings-v2";
+const LOCAL_SETTINGS_MIGRATION_KEY = "video-script-local-settings-owner-v1";
 
 const BUILTIN_MODELS: ModelOption[] = [
   {
@@ -225,49 +236,107 @@ function hasSavedKeys(settings: Settings) {
   return Boolean(settings.tikhubKey || settings.asrKey || settings.openRouterKey || settings.deepseekKey || settings.customKey);
 }
 
+function readStoredSettings(key: string) {
+  try {
+    const saved = window.localStorage.getItem(key);
+    return saved ? { ...DEFAULT_SETTINGS, ...JSON.parse(saved) } as Settings : null;
+  } catch {
+    return null;
+  }
+}
+
+function readLocalAccountSettings(accountId: string) {
+  const accountKey = localSettingsKey(accountId);
+  const ownSettings = readStoredSettings(accountKey);
+  if (ownSettings) return ownSettings;
+
+  const legacySettings = readStoredSettings(STORAGE_KEY);
+  const migrationOwner = window.localStorage.getItem(LOCAL_SETTINGS_MIGRATION_KEY);
+  if (legacySettings && !migrationOwner) {
+    window.localStorage.setItem(accountKey, JSON.stringify(legacySettings));
+    window.localStorage.setItem(LOCAL_SETTINGS_MIGRATION_KEY, accountId);
+    return legacySettings;
+  }
+  return DEFAULT_SETTINGS;
+}
+
 function LoginGate({
   status,
   error,
+  onLocalAccountAuthenticated,
   onContinueLocally,
   onRetry,
 }: {
   status: AccountStatus;
   error: string;
+  onLocalAccountAuthenticated: (account: LocalAccountProfile) => void;
   onContinueLocally: () => void;
   onRetry: () => void;
 }) {
+  const [mode, setMode] = useState<"login" | "register">("login");
+  const [username, setUsername] = useState("");
+  const [password, setPassword] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const [formError, setFormError] = useState("");
+
+  const submit = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    setSubmitting(true);
+    setFormError("");
+    try {
+      const account = mode === "register"
+        ? await registerLocalAccount(username, password)
+        : await loginLocalAccount(username, password);
+      onLocalAccountAuthenticated(account);
+    } catch (caught) {
+      setFormError(caught instanceof Error ? caught.message : "登录失败，请重试");
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
   return (
     <main className="login-shell">
       <section className="login-story">
         <div className="login-brand"><span>稿</span><b>视频成稿</b></div>
         <div className="login-copy">
           <p className="eyebrow">你的内容工作台</p>
-          <h1>登录一次，常用的 Key 自动回来</h1>
-          <p>抖音、B站、语音识别与总结模型的连接设置，都跟随你的账号安全保存。</p>
+          <h1>一个内测账号，保存你的创作进度</h1>
+          <p>先用简单的账号和密码进入。API Key 与历史文稿按账号分开保存在当前浏览器。</p>
         </div>
         <div className="login-benefits">
-          <div><i>01</i><span><b>自动恢复</b><small>换电脑或清理浏览器后，不必重新找 Key</small></span></div>
-          <div><i>02</i><span><b>加密保存</b><small>密钥加密后写入账号数据库，不会进入公开代码</small></span></div>
-          <div><i>03</i><span><b>仍可本机使用</b><small>暂不登录时，也可以只把设置留在当前浏览器</small></span></div>
+          <div><i>01</i><span><b>账号隔离</b><small>不同测试账号分别保存 Key 和历史文稿</small></span></div>
+          <div><i>02</i><span><b>密码不明文保存</b><small>浏览器只记录密码摘要，但它仍不是正式安全系统</small></span></div>
+          <div><i>03</i><span><b>随时继续完善</b><small>正式开放用户前，再升级云端账号与找回密码</small></span></div>
         </div>
       </section>
 
       <section className="login-panel">
         <div className="login-card">
           <span className="login-card-mark">稿</span>
-          <p className="eyebrow">欢迎回来</p>
-          <h2>{status === "loading" ? "正在检查登录状态" : status === "error" ? "暂时无法连接账号" : "登录视频成稿"}</h2>
-          <p>{status === "loading" ? "正在为你读取账号与已保存的连接设置……" : error || "使用 ChatGPT 账号登录，自动同步以前填写过的 API Key。"}</p>
+          <p className="eyebrow">内测账号</p>
+          <h2>{status === "loading" ? "正在检查登录状态" : mode === "login" ? "登录视频成稿" : "创建测试账号"}</h2>
+          <p>{status === "loading" ? "正在为你读取账号与已保存的连接设置……" : "使用账号和密码进入。这个版本只在当前浏览器生效。"}</p>
           {status === "loading" ? (
             <div className="login-loading"><i /><span>正在连接</span></div>
           ) : (
             <>
-              <a className="login-primary" href="/signin-with-chatgpt?return_to=%2F">使用 ChatGPT 登录 <span>→</span></a>
+              <div className="login-mode-switch" role="tablist" aria-label="登录方式">
+                <button className={mode === "login" ? "active" : ""} onClick={() => { setMode("login"); setFormError(""); }} type="button">登录</button>
+                <button className={mode === "register" ? "active" : ""} onClick={() => { setMode("register"); setFormError(""); }} type="button">注册测试账号</button>
+              </div>
+              <form className="login-form" onSubmit={submit}>
+                <label className="login-field"><span>账号</span><input value={username} onChange={(event) => setUsername(event.target.value)} autoComplete="username" placeholder="输入你的账号" minLength={2} maxLength={40} required /></label>
+                <label className="login-field"><span>密码</span><input type="password" value={password} onChange={(event) => setPassword(event.target.value)} autoComplete={mode === "register" ? "new-password" : "current-password"} placeholder="至少 4 个字符" minLength={4} maxLength={100} required /></label>
+                {(formError || error) && <p className="login-form-error">{formError || error}</p>}
+                <button className="login-primary login-submit" disabled={submitting}>{submitting ? "正在处理…" : mode === "login" ? "登录" : "创建并登录"}<span>→</span></button>
+              </form>
               {status === "error" && <button className="login-retry" onClick={onRetry}>重新检查</button>}
               <button className="login-local" onClick={onContinueLocally}>暂不登录，只在本机使用</button>
+              <a className="legacy-login-link" href="/signin-with-chatgpt?return_to=%2F">读取以前用 ChatGPT 账号保存的数据</a>
             </>
           )}
-          <small className="login-privacy">登录只用于识别你的账号和保存设置，不会读取你的 ChatGPT 对话。</small>
+          <small className="login-privacy">内测提醒：账号、密码摘要、Key 和文稿都在当前浏览器；清理浏览器或换设备后无法恢复。正式开放用户前会升级云端账号系统。</small>
         </div>
       </section>
     </main>
@@ -302,6 +371,18 @@ export default function Home() {
   useEffect(() => {
     let cancelled = false;
     const hydrate = async () => {
+      const localAccount = getCurrentLocalAccount();
+      if (localAccount) {
+        const nextSettings = readLocalAccountSettings(localAccount.id);
+        setSettings(nextSettings);
+        setDraftSettings(nextSettings);
+        setAccountUser({ id: localAccount.id, displayName: localAccount.username, kind: "local" });
+        setAccountStatus("local-account");
+        setLocalOnly(false);
+        window.sessionStorage.removeItem("video-script-local-only");
+        return;
+      }
+
       let localSettings = DEFAULT_SETTINGS;
       try {
         const saved = window.localStorage.getItem(STORAGE_KEY);
@@ -322,7 +403,7 @@ export default function Home() {
           return;
         }
         if (!response.ok) throw new Error(String(payload.error ?? "账号服务暂时不可用"));
-        const user = payload.user as AccountUser;
+        const user = { ...(payload.user as AccountUser), kind: "cloud" as const };
         const cloudSettings = payload.settings && typeof payload.settings === "object" ? payload.settings as Partial<Settings> : null;
         const nextSettings = cloudSettings ? { ...DEFAULT_SETTINGS, ...localSettings, ...cloudSettings } as Settings : localSettings;
         setSettings(nextSettings);
@@ -412,7 +493,8 @@ export default function Home() {
   const persistSettings = (next: Settings) => {
     setSettings(next);
     setDraftSettings(next);
-    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
+    const storageKey = accountStatus === "local-account" && accountUser?.id ? localSettingsKey(accountUser.id) : STORAGE_KEY;
+    window.localStorage.setItem(storageKey, JSON.stringify(next));
     void syncCloudSettings(next);
   };
 
@@ -458,7 +540,7 @@ export default function Home() {
       setError({
         service: "连接设置",
         reason: `还没有填写：${missing.join("、")}`,
-        suggestion: accountStatus === "authenticated" ? "打开连接设置，填好后会自动保存到你的账号。" : "打开连接设置，填好后会保存在当前浏览器。",
+        suggestion: accountStatus === "authenticated" ? "打开连接设置，填好后会自动保存到你的账号。" : accountStatus === "local-account" ? "打开连接设置，填好后会保存到当前内测账号。" : "打开连接设置，填好后会保存在当前浏览器。",
       });
       setStage("error");
       openSettings();
@@ -612,6 +694,16 @@ export default function Home() {
       <LoginGate
         status={accountStatus}
         error={accountError}
+        onLocalAccountAuthenticated={(account) => {
+          const nextSettings = readLocalAccountSettings(account.id);
+          window.sessionStorage.removeItem("video-script-local-only");
+          setLocalOnly(false);
+          setSettings(nextSettings);
+          setDraftSettings(nextSettings);
+          setAccountUser({ id: account.id, displayName: account.username, kind: "local" });
+          setAccountStatus("local-account");
+          setAccountError("");
+        }}
         onRetry={() => { setAccountError(""); setAccountStatus("loading"); setAccountReload((value) => value + 1); }}
         onContinueLocally={() => {
           window.sessionStorage.setItem("video-script-local-only", "1");
@@ -697,21 +789,32 @@ export default function Home() {
               </div>
             )}
           </div>
-          {accountStatus === "authenticated" && accountUser ? (
+          {(accountStatus === "authenticated" || accountStatus === "local-account") && accountUser ? (
             <details className="account-menu">
               <summary aria-label="账号菜单">
-                <span>{(accountUser.displayName || accountUser.email).slice(0, 1).toUpperCase()}</span>
-                <i className={syncState === "error" ? "error" : ""}>{syncState === "saving" ? "同步中" : syncState === "error" ? "同步失败" : "已登录"}</i>
+                <span>{(accountUser.displayName || accountUser.email || "账").slice(0, 1).toUpperCase()}</span>
+                <i className={syncState === "error" ? "error" : ""}>{accountStatus === "local-account" ? "本机内测" : syncState === "saving" ? "同步中" : syncState === "error" ? "同步失败" : "已登录"}</i>
               </summary>
               <div>
                 <b>{accountUser.displayName}</b>
-                <small>{accountUser.email}</small>
-                <p><i className={syncState === "saved" ? "ok" : ""} />{syncState === "saving" ? "正在加密保存设置" : syncState === "error" ? "云端保存失败，本机设置仍然可用" : "API Key 会自动同步到你的账号"}</p>
-                <a href="/signout-with-chatgpt?return_to=%2F">退出登录</a>
+                <small>{accountStatus === "local-account" ? "当前浏览器里的测试账号" : accountUser.email}</small>
+                <p><i className={accountStatus === "local-account" || syncState === "saved" ? "ok" : ""} />{accountStatus === "local-account" ? "Key 与文稿按此账号保存在本机" : syncState === "saving" ? "正在加密保存设置" : syncState === "error" ? "云端保存失败，本机设置仍然可用" : "API Key 会自动同步到你的账号"}</p>
+                {accountStatus === "local-account" ? (
+                  <button className="account-logout-button" onClick={() => {
+                    logoutLocalAccount();
+                    setAccountUser(null);
+                    setAccountStatus("anonymous");
+                    setSettings(DEFAULT_SETTINGS);
+                    setDraftSettings(DEFAULT_SETTINGS);
+                  }}>退出登录</button>
+                ) : <a href="/signout-with-chatgpt?return_to=%2F">退出登录</a>}
               </div>
             </details>
           ) : (
-            <a className="account-login-link" href="/signin-with-chatgpt?return_to=%2F">登录并同步</a>
+            <button className="account-login-link" onClick={() => {
+              window.sessionStorage.removeItem("video-script-local-only");
+              setLocalOnly(false);
+            }}>登录账号</button>
           )}
           </div>
         </header>
@@ -906,7 +1009,7 @@ export default function Home() {
               <div>
                 <p className="eyebrow">连接设置</p>
                 <h2>连接服务与总结模型</h2>
-                <span>{accountStatus === "authenticated" ? "密钥会加密保存到你的账号，并在下次登录时自动恢复。" : "选择默认、DeepSeek 或自定义模型。密钥只保存在这个浏览器。"}</span>
+                <span>{accountStatus === "authenticated" ? "密钥会加密保存到你的账号，并在下次登录时自动恢复。" : accountStatus === "local-account" ? "密钥按内测账号保存在这个浏览器，下次登录会自动恢复。" : "选择默认、DeepSeek 或自定义模型。密钥只保存在这个浏览器。"}</span>
               </div>
               <button className="modal-close" onClick={() => setSettingsOpen(false)} aria-label="关闭">×</button>
             </header>
@@ -974,7 +1077,7 @@ export default function Home() {
             </div>
 
             <footer>
-              <label className="show-key-toggle"><input type="checkbox" checked={showKeys} onChange={(event) => setShowKeys(event.target.checked)} /> 显示密钥 · {accountStatus === "authenticated" ? syncState === "saving" ? "正在同步" : syncState === "error" ? "同步失败" : "账号自动保存" : "本机保存"}</label>
+              <label className="show-key-toggle"><input type="checkbox" checked={showKeys} onChange={(event) => setShowKeys(event.target.checked)} /> 显示密钥 · {accountStatus === "authenticated" ? syncState === "saving" ? "正在同步" : syncState === "error" ? "同步失败" : "账号自动保存" : accountStatus === "local-account" ? "内测账号保存" : "本机保存"}</label>
               <div><button className="cancel-button" onClick={() => setSettingsOpen(false)}>取消</button><button className="primary-button" onClick={saveSettings}>保存设置 <span>✓</span></button></div>
             </footer>
           </section>

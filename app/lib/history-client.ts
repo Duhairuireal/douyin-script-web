@@ -1,5 +1,7 @@
 "use client";
 
+import { getCurrentLocalAccount } from "./local-account";
+
 export type HistoryPlatform = "douyin" | "bilibili" | "manual";
 
 export type HistoryDocument = {
@@ -17,6 +19,7 @@ export type HistoryDocument = {
   method: string;
   createdAt: number;
   updatedAt: number;
+  localOwnerId?: string;
 };
 
 export type NewHistoryDocument = Omit<HistoryDocument, "id" | "createdAt" | "updatedAt"> & {
@@ -30,6 +33,10 @@ const DB_VERSION = 2;
 const HISTORY_STORE = "history-documents";
 const LEGACY_BILIBILI_STORE = "bilibili-results";
 export const HISTORY_CHANGED_EVENT = "video-script-history-changed";
+
+function currentLocalOwnerId() {
+  return getCurrentLocalAccount()?.id;
+}
 
 type LegacyBilibiliResult = {
   id: string;
@@ -80,9 +87,23 @@ export async function listLocalHistory() {
   const db = await openDb();
   return new Promise<HistoryDocument[]>((resolve, reject) => {
     const request = db.transaction(HISTORY_STORE, "readonly").objectStore(HISTORY_STORE).getAll();
-    request.onsuccess = () => resolve((request.result as HistoryDocument[]).sort((a, b) => b.updatedAt - a.updatedAt));
+    request.onsuccess = () => resolve(request.result as HistoryDocument[]);
     request.onerror = () => reject(request.error);
-  }).finally(() => db.close());
+  }).finally(() => db.close()).then(async (documents) => {
+    const ownerId = currentLocalOwnerId();
+    if (!ownerId) {
+      return documents.filter((row) => !row.localOwnerId).sort((a, b) => b.updatedAt - a.updatedAt);
+    }
+
+    const unclaimed = documents.filter((row) => !row.localOwnerId);
+    if (unclaimed.length) {
+      await Promise.all(unclaimed.map((row) => localPut({ ...row, localOwnerId: ownerId })));
+    }
+    return documents
+      .filter((row) => !row.localOwnerId || row.localOwnerId === ownerId)
+      .map((row) => row.localOwnerId ? row : { ...row, localOwnerId: ownerId })
+      .sort((a, b) => b.updatedAt - a.updatedAt);
+  });
 }
 
 export async function migrateLegacyBilibiliHistory() {
@@ -113,6 +134,7 @@ export async function migrateLegacyBilibiliHistory() {
       method: row.method === "subtitle" ? "B站字幕" : "豆包 ASR",
       createdAt: row.savedAt,
       updatedAt: row.savedAt,
+      localOwnerId: currentLocalOwnerId(),
     };
     await localPut(document);
     additions.push(document);
@@ -143,6 +165,7 @@ export async function saveHistoryDocument(input: NewHistoryDocument) {
     id: input.id || crypto.randomUUID(),
     createdAt: input.createdAt || now,
     updatedAt: input.updatedAt || now,
+    localOwnerId: currentLocalOwnerId(),
   };
   await localPut(document);
   try {
@@ -176,8 +199,9 @@ export async function loadHistoryDocuments() {
   for (const row of cloud) {
     const cached = merged.get(row.id);
     if (!cached || row.updatedAt >= cached.updatedAt) {
-      merged.set(row.id, row);
-      await localPut(row);
+      const cachedCloudRow = { ...row, localOwnerId: undefined };
+      merged.set(row.id, cachedCloudRow);
+      await localPut(cachedCloudRow);
     }
   }
   local = [...merged.values()].sort((a, b) => b.updatedAt - a.updatedAt);
