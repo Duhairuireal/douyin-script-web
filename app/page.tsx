@@ -19,6 +19,7 @@ type Stage = "idle" | "resolving" | "transcribing" | "summarizing" | "done" | "e
 type ResultTab = "summary" | "transcript";
 type SummaryPreset = "openrouter-free" | "deepseek-flash" | "deepseek-pro" | "custom";
 type ThinkingLevel = "disabled" | "high" | "max";
+type SecretKeyName = "tikhubKey" | "asrKey" | "openRouterKey" | "deepseekKey" | "customKey";
 type AccountStatus = "loading" | "anonymous" | "local-account" | "authenticated" | "error";
 type SyncState = "idle" | "saving" | "saved" | "error";
 
@@ -260,6 +261,51 @@ function readLocalAccountSettings(accountId: string) {
   return DEFAULT_SETTINGS;
 }
 
+function SecretField({
+  id,
+  label,
+  value,
+  placeholder,
+  revealed,
+  onChange,
+  onReplace,
+}: {
+  id: string;
+  label: string;
+  value: string;
+  placeholder: string;
+  revealed: boolean;
+  onChange: (value: string) => void;
+  onReplace: () => void;
+}) {
+  const inputRef = useRef<HTMLInputElement>(null);
+  const replace = () => {
+    onReplace();
+    window.requestAnimationFrame(() => inputRef.current?.focus());
+  };
+
+  return (
+    <div className="secret-field">
+      <div className="secret-field-heading">
+        <label htmlFor={id}>{label}</label>
+        {value && <button type="button" onClick={replace}>更换</button>}
+      </div>
+      <input
+        ref={inputRef}
+        id={id}
+        aria-label={label}
+        type={revealed ? "text" : "password"}
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
+        placeholder={placeholder}
+        autoComplete="new-password"
+        spellCheck={false}
+      />
+      {revealed && !value && <small className="secret-field-note">旧 Key 尚未保存更改，请填入新的 Key；点“取消”可保留原值。</small>}
+    </div>
+  );
+}
+
 function LoginGate({
   status,
   error,
@@ -352,6 +398,7 @@ export default function Home() {
   const [draftSettings, setDraftSettings] = useState<Settings>(DEFAULT_SETTINGS);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [showKeys, setShowKeys] = useState(false);
+  const [editingSecret, setEditingSecret] = useState<SecretKeyName | null>(null);
   const [modelOpen, setModelOpen] = useState(false);
   const [modelSearch, setModelSearch] = useState("");
   const [stage, setStage] = useState<Stage>("idle");
@@ -441,6 +488,7 @@ export default function Home() {
       if (event.key === "Escape") {
         setModelOpen(false);
         setSettingsOpen(false);
+        setEditingSecret(null);
       }
     };
     document.addEventListener("pointerdown", closePicker);
@@ -510,6 +558,7 @@ export default function Home() {
 
   const openSettings = () => {
     setDraftSettings(settings);
+    setEditingSecret(null);
     setSettingsOpen(true);
     setModelOpen(false);
   };
@@ -527,6 +576,7 @@ export default function Home() {
       customKey: draftSettings.customKey.trim(),
       customModel: draftSettings.customModel.trim(),
     });
+    setEditingSecret(null);
     setSettingsOpen(false);
   };
 
@@ -1002,7 +1052,10 @@ export default function Home() {
 
       {settingsOpen && (
         <div className="modal-backdrop" role="presentation" onMouseDown={(event) => {
-          if (event.target === event.currentTarget) setSettingsOpen(false);
+          if (event.target === event.currentTarget) {
+            setEditingSecret(null);
+            setSettingsOpen(false);
+          }
         }}>
           <section className="settings-modal" role="dialog" aria-modal="true" aria-label="连接设置">
             <header>
@@ -1011,19 +1064,19 @@ export default function Home() {
                 <h2>连接服务与总结模型</h2>
                 <span>{accountStatus === "authenticated" ? "密钥会加密保存到你的账号，并在下次登录时自动恢复。" : accountStatus === "local-account" ? "密钥按内测账号保存在这个浏览器，下次登录会自动恢复。" : "选择默认、DeepSeek 或自定义模型。密钥只保存在这个浏览器。"}</span>
               </div>
-              <button className="modal-close" onClick={() => setSettingsOpen(false)} aria-label="关闭">×</button>
+              <button className="modal-close" onClick={() => { setEditingSecret(null); setSettingsOpen(false); }} aria-label="关闭">×</button>
             </header>
 
             <div className="settings-body">
               <div className="provider-section">
                 <div className="provider-title"><i>1</i><span><b>TikHub</b><small>读取抖音作品与 B站 UP 主公开视频</small></span><em className={draftSettings.tikhubKey ? "ok" : ""}>{draftSettings.tikhubKey ? "已填写" : "待填写"}</em></div>
-                <label><span>API Key</span><input type={showKeys ? "text" : "password"} value={draftSettings.tikhubKey} onChange={(event) => setDraftSettings({ ...draftSettings, tikhubKey: event.target.value })} placeholder="tk_..." autoComplete="off" /></label>
+                <SecretField id="tikhub-api-key" label="TikHub API Key" value={draftSettings.tikhubKey} placeholder="tk_..." revealed={showKeys || editingSecret === "tikhubKey"} onChange={(value) => setDraftSettings((current) => ({ ...current, tikhubKey: value }))} onReplace={() => { setEditingSecret("tikhubKey"); setDraftSettings((current) => ({ ...current, tikhubKey: "" })); }} />
               </div>
 
               <div className="provider-section">
                 <div className="provider-title"><i>2</i><span><b>火山豆包 ASR</b><small>录音文件识别 2.0，生成完整文稿</small></span><em className={draftSettings.asrKey ? "ok" : ""}>{draftSettings.asrKey ? "已填写" : "待填写"}</em></div>
                 <div className="field-grid">
-                  <label><span>ASR API Key</span><input type={showKeys ? "text" : "password"} value={draftSettings.asrKey} onChange={(event) => setDraftSettings({ ...draftSettings, asrKey: event.target.value })} placeholder="火山语音控制台的 API Key" autoComplete="off" /></label>
+                  <SecretField id="asr-api-key" label="ASR API Key" value={draftSettings.asrKey} placeholder="火山语音控制台的 API Key" revealed={showKeys || editingSecret === "asrKey"} onChange={(value) => setDraftSettings((current) => ({ ...current, asrKey: value }))} onReplace={() => { setEditingSecret("asrKey"); setDraftSettings((current) => ({ ...current, asrKey: "" })); }} />
                   <label><span>资源 ID</span><input value={draftSettings.asrResourceId} onChange={(event) => setDraftSettings({ ...draftSettings, asrResourceId: event.target.value })} /></label>
                 </div>
               </div>
@@ -1034,7 +1087,7 @@ export default function Home() {
                   <span><b>免费总结 · OpenRouter</b><small>免费模型自动路由，适合测试与低频使用</small></span>
                   <button className="preset-button" onClick={() => setDraftSettings({ ...draftSettings, summaryPreset: "openrouter-free" })}>{draftSettings.summaryPreset === "openrouter-free" ? "当前使用" : "设为当前"}</button>
                 </div>
-                <label><span>OpenRouter API Key</span><input type={showKeys ? "text" : "password"} value={draftSettings.openRouterKey} onChange={(event) => setDraftSettings({ ...draftSettings, openRouterKey: event.target.value })} placeholder="sk-or-v1-..." autoComplete="off" /></label>
+                <SecretField id="openrouter-api-key" label="OpenRouter API Key" value={draftSettings.openRouterKey} placeholder="sk-or-v1-..." revealed={showKeys || editingSecret === "openRouterKey"} onChange={(value) => setDraftSettings((current) => ({ ...current, openRouterKey: value }))} onReplace={() => { setEditingSecret("openRouterKey"); setDraftSettings((current) => ({ ...current, openRouterKey: "" })); }} />
                 <p className="provider-tip">模型 ID 固定为 openrouter/free。免费路由可能排队或限流，适合前期测试。</p>
               </div>
 
@@ -1044,7 +1097,7 @@ export default function Home() {
                   <span><b>DeepSeek V4</b><small>Flash 日常总结，Pro 处理复杂长文</small></span>
                   <em className={draftSettings.deepseekKey ? "ok" : ""}>{draftSettings.deepseekKey ? "已填写" : "待填写"}</em>
                 </div>
-                <label><span>DeepSeek API Key</span><input type={showKeys ? "text" : "password"} value={draftSettings.deepseekKey} onChange={(event) => setDraftSettings({ ...draftSettings, deepseekKey: event.target.value })} placeholder="sk-..." autoComplete="off" /></label>
+                <SecretField id="deepseek-api-key" label="DeepSeek API Key" value={draftSettings.deepseekKey} placeholder="sk-..." revealed={showKeys || editingSecret === "deepseekKey"} onChange={(value) => setDraftSettings((current) => ({ ...current, deepseekKey: value }))} onReplace={() => { setEditingSecret("deepseekKey"); setDraftSettings((current) => ({ ...current, deepseekKey: "" })); }} />
                 <div className="preset-pair">
                   <button className={draftSettings.summaryPreset === "deepseek-flash" ? "active" : ""} onClick={() => setDraftSettings({ ...draftSettings, summaryPreset: "deepseek-flash" })}><b>V4 Flash</b><small>快速、低成本</small></button>
                   <button className={draftSettings.summaryPreset === "deepseek-pro" ? "active" : ""} onClick={() => setDraftSettings({ ...draftSettings, summaryPreset: "deepseek-pro" })}><b>V4 Pro</b><small>复杂内容、深度整理</small></button>
@@ -1072,13 +1125,13 @@ export default function Home() {
                   <label><span>模型 ID</span><input value={draftSettings.customModel} onChange={(event) => setDraftSettings({ ...draftSettings, customModel: event.target.value })} placeholder="provider/model-name" /></label>
                 </div>
                 <label><span>API 地址</span><input value={draftSettings.customBase} onChange={(event) => setDraftSettings({ ...draftSettings, customBase: event.target.value })} placeholder="https://example.com/v1" /></label>
-                <label><span>API Key</span><input type={showKeys ? "text" : "password"} value={draftSettings.customKey} onChange={(event) => setDraftSettings({ ...draftSettings, customKey: event.target.value })} placeholder="sk-..." autoComplete="off" /></label>
+                <SecretField id="custom-api-key" label="自定义 API Key" value={draftSettings.customKey} placeholder="sk-..." revealed={showKeys || editingSecret === "customKey"} onChange={(value) => setDraftSettings((current) => ({ ...current, customKey: value }))} onReplace={() => { setEditingSecret("customKey"); setDraftSettings((current) => ({ ...current, customKey: "" })); }} />
               </div>
             </div>
 
             <footer>
               <label className="show-key-toggle"><input type="checkbox" checked={showKeys} onChange={(event) => setShowKeys(event.target.checked)} /> 显示密钥 · {accountStatus === "authenticated" ? syncState === "saving" ? "正在同步" : syncState === "error" ? "同步失败" : "账号自动保存" : accountStatus === "local-account" ? "内测账号保存" : "本机保存"}</label>
-              <div><button className="cancel-button" onClick={() => setSettingsOpen(false)}>取消</button><button className="primary-button" onClick={saveSettings}>保存设置 <span>✓</span></button></div>
+              <div><button className="cancel-button" onClick={() => { setEditingSecret(null); setSettingsOpen(false); }}>取消</button><button className="primary-button" onClick={saveSettings}>保存设置 <span>✓</span></button></div>
             </footer>
           </section>
         </div>

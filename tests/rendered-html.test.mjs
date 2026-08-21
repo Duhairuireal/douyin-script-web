@@ -73,6 +73,9 @@ test("keeps platform workflows and secrets separated", async () => {
   assert.match(cryptoHelper, /AES-GCM/);
   assert.match(hosting, /"d1": "DB"/);
   assert.match(page, /video-script-local-only/);
+  assert.match(page, /function SecretField/);
+  assert.match(page, />更换<\/button>/);
+  assert.match(page, /旧 Key 尚未保存更改/);
   assert.doesNotMatch(`${page}\n${importer}`, /tk_[A-Za-z0-9]{16,}|sk-[A-Za-z0-9]{16,}/);
 
   await access(new URL("../app/api/bilibili/media/route.ts", import.meta.url));
